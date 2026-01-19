@@ -1,0 +1,15 @@
+.env
+node_modules
+__pycache__/
+*.py[cod]
+*.pyc
+*.pyo
+*.pyd
+*.pyw
+*.pyz
+*.pywz
+*.pyzw
+*.pyz
+
+.venv
+.DS_Store
