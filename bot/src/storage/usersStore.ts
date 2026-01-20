@@ -2,9 +2,14 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { StoredUser } from "../types.js";
 
-const USERS_FILE = path.join(process.cwd(), "users.json");
+const USERS_FILE = (() => {
+  const raw = process.env.USERS_FILE?.trim();
+  if (!raw) return path.join(process.cwd(), "users.json");
+  return path.isAbsolute(raw) ? raw : path.resolve(process.cwd(), raw);
+})();
 
 async function ensureUsersFile(): Promise<void> {
+  await fs.mkdir(path.dirname(USERS_FILE), { recursive: true });
   try {
     await fs.access(USERS_FILE);
   } catch {

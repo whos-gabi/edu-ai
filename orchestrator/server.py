@@ -20,7 +20,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 import requests
 from dotenv import load_dotenv
@@ -37,6 +39,23 @@ GRADEBOOK_API_KEY = os.getenv("GRADEBOOK_API_KEY")
 AZURE_SEARCH_ENDPOINT = os.getenv("AZURE_SEARCH_ENDPOINT")
 AZURE_SEARCH_KEY = os.getenv("AZURE_SEARCH_KEY")
 AZURE_SEARCH_INDEX = os.getenv("AZURE_SEARCH_INDEX")
+
+
+def _debug_log(hypothesis_id: str, location: str, message: str, data: Dict[str, Any]) -> None:
+    try:
+        payload = {
+            "sessionId": "debug-session",
+            "runId": "pre-fix",
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+            "timestamp": int(time.time() * 1000),
+        }
+        with open("/Users/cryptobroski/git/edu-ai/.cursor/debug.log", "a") as fh:
+            fh.write(json.dumps(payload) + "\n")
+    except Exception:
+        pass
 
 
 class ToolExecutionError(RuntimeError):
@@ -60,6 +79,21 @@ def _call_gradebook_api(path: str, params: Dict[str, Any]) -> Dict[str, Any]:
 
     url = f"{GRADEBOOK_API_BASE_URL.rstrip('/')}/{path.lstrip('/')}"
     headers = {"x-api-key": GRADEBOOK_API_KEY}
+
+    # region debug log H4
+    _debug_log(
+        "H4",
+        "server.py:_call_gradebook_api",
+        "gradebook_request_pre",
+        {
+            "base_url_set": bool(GRADEBOOK_API_BASE_URL),
+            "base_url_host": urlparse(GRADEBOOK_API_BASE_URL or "").netloc,
+            "path": path,
+            "params_keys": sorted(params.keys()),
+            "phone_len": len(str(params.get("phone", ""))),
+        },
+    )
+    # endregion
 
     logger.info("Calling gradebook API %s with params=%s", url, params)
     response = requests.get(url, headers=headers, params=params, timeout=15)

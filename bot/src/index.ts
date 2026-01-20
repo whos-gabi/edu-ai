@@ -173,9 +173,41 @@ bot.on("text", async (ctx) => {
     return;
   }
 
+  // #region debug log H6
+  fetch("http://127.0.0.1:7242/ingest/6f0a844a-d53d-4ddc-b246-3444195ce1ea", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      sessionId: "debug-session",
+      runId: "pre-fix",
+      hypothesisId: "H6",
+      location: "index.ts:bot_text",
+      message: "agent_reply_request",
+      data: {
+        auth_stage: user.authStage,
+        has_phone: Boolean(user.phoneNumber),
+        phone_len: user.phoneNumber?.length ?? 0,
+        phone_kind: user.phoneNumber?.startsWith("+")
+          ? "phone_like"
+          : user.phoneNumber?.match(/^[0-9]+$/)
+          ? "digits_only"
+          : "other",
+        agent_url_present: Boolean(process.env.AGENT_API_URL?.trim()),
+      },
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {});
+  // #endregion
+
+  if (!user.phoneNumber) {
+    await ctx.reply("Missing verified phone number. Please /logout and try again.");
+    return;
+  }
+
   const reply = await agentReply(text, {
     url: process.env.AGENT_API_URL,
     apiKey: process.env.AGENT_API_KEY,
+    phone: user.phoneNumber,
   });
   await ctx.reply(reply);
 });

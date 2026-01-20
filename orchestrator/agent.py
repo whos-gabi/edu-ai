@@ -12,6 +12,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
@@ -51,17 +53,57 @@ TOOL_FUNCTIONS = {
 
 app = FastAPI(title="EduAi Orchestrator", version="1.0.0")
 
-# Per-user conversation histories; key = user_id, value = list of messages.
+# Per-user conversation histories; key = phone, value = list of messages.
 user_histories: Dict[str, List[Dict[str, Any]]] = {}
 
 # Lazy-initialized Azure OpenAI client.
 _client: Optional[AzureOpenAI] = None
 
 
+def _debug_log(hypothesis_id: str, location: str, message: str, data: Dict[str, Any]) -> None:
+    try:
+        payload = {
+            "sessionId": "debug-session",
+            "runId": "pre-fix",
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+            "timestamp": int(time.time() * 1000),
+        }
+        with open("/Users/cryptobroski/git/edu-ai/.cursor/debug.log", "a") as fh:
+            fh.write(json.dumps(payload) + "\n")
+    except Exception:
+        pass
+
+
+def _phone_kind(phone: str) -> str:
+    if phone.startswith("+"):
+        return "phone_like"
+    if phone.isdigit():
+        return "digits_only"
+    return "other"
+
+
+def _now_context_ro() -> str:
+    weekday_names = [
+        "luni",
+        "marți",
+        "miercuri",
+        "joi",
+        "vineri",
+        "sâmbătă",
+        "duminică",
+    ]
+    now = datetime.now()
+    weekday = weekday_names[now.weekday()]
+    return f"Data curentă este {weekday}, {now.strftime('%d.%m.%Y')}."
+
+
 class ChatRequest(BaseModel):
     """Inbound chat payload."""
 
-    user_id: str  # Telegram user ID / phone
+    phone: str  # Verified phone number (server-trusted)
     message: str  # User message
 
 
@@ -117,16 +159,16 @@ PHONE_BOUND_TOOLS = {
 }
 
 
-def _dispatch_tool_call(tool_call: Dict[str, Any], user_id: str) -> str:
+def _dispatch_tool_call(tool_call: Dict[str, Any], phone: str) -> str:
     """
     Execute a tool call from the model and return serialized content.
 
     Security: for phone-bound tools, the backend injects the authenticated
-    user's phone (user_id) and ignores any phone provided by the model.
+    user's phone and ignores any phone provided by the model.
 
     Args:
         tool_call: Tool call payload from the model response.
-        user_id: Authenticated user identifier (e.g., phone/Telegram ID).
+        phone: Authenticated user phone number.
 
     Returns:
         JSON-encoded string with the tool result or error information.
@@ -134,6 +176,21 @@ def _dispatch_tool_call(tool_call: Dict[str, Any], user_id: str) -> str:
 
     name = tool_call["function"]["name"]
     arguments_raw = tool_call["function"]["arguments"]
+
+    # region debug log H1
+    _debug_log(
+        "H1",
+        "agent.py:_dispatch_tool_call",
+        "tool_call_received",
+        {
+            "tool": name,
+            "phone_bound": name in PHONE_BOUND_TOOLS,
+            "args_has_phone": '"phone"' in (arguments_raw or ""),
+            "phone_kind": _phone_kind(phone),
+            "phone_len": len(phone),
+        },
+    )
+    # endregion
 
     logger.info("AI requested tool '%s' with args=%s", name, arguments_raw)
 
@@ -144,7 +201,20 @@ def _dispatch_tool_call(tool_call: Dict[str, Any], user_id: str) -> str:
 
     if name in PHONE_BOUND_TOOLS:
         # Enforce server-side binding of phone to the authenticated user.
-        arguments["phone"] = user_id
+        arguments["phone"] = phone
+
+        # region debug log H2
+        _debug_log(
+            "H2",
+            "agent.py:_dispatch_tool_call",
+            "phone_bound_to_user",
+            {
+                "tool": name,
+                "bound_phone_kind": _phone_kind(str(arguments.get("phone", ""))),
+                "bound_phone_len": len(str(arguments.get("phone", ""))),
+            },
+        )
+        # endregion
 
     tool_fn = TOOL_FUNCTIONS.get(name)
     if not tool_fn:
@@ -170,15 +240,15 @@ def _get_client() -> AzureOpenAI:
     return _client
 
 
-def _get_history(user_id: str) -> List[Dict[str, Any]]:
+def _get_history(phone: str) -> List[Dict[str, Any]]:
     """
     Retrieve or initialize the conversation history for a user.
 
     Ensures the system prompt is present as the first message.
     """
 
-    if user_id not in user_histories:
-        user_histories[user_id] = [
+    if phone not in user_histories:
+        user_histories[phone] = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {
                 "role": "system",
@@ -188,8 +258,9 @@ def _get_history(user_id: str) -> List[Dict[str, Any]]:
                     "apelează uneltele direct."
                 ),
             },
+            {"role": "system", "content": _now_context_ro()},
         ]
-    return user_histories[user_id]
+    return user_histories[phone]
 
 
 def _repair_history(history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -218,12 +289,12 @@ def _repair_history(history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return history
 
 
-def process_chat(user_id: str, user_message: str) -> str:
+def process_chat(phone: str, user_message: str) -> str:
     """
     Process a single chat turn for a given user, including tool calls.
 
     Args:
-        user_id: Unique user identifier (e.g., Telegram ID/phone).
+        phone: Verified phone number for the authenticated user.
         user_message: Latest user input.
 
     Returns:
@@ -234,10 +305,18 @@ def process_chat(user_id: str, user_message: str) -> str:
     if not deployment:
         raise RuntimeError("AZURE_OPENAI_DEPLOYMENT is not set.")
 
-    original_history = _get_history(user_id)
+    original_history = _get_history(phone)
     history = _repair_history(original_history)
     if history is not original_history:
-        user_histories[user_id] = history
+        user_histories[phone] = history
+
+    # Refresh "current date" system context on each request.
+    history[:] = [
+        msg
+        for msg in history
+        if not (msg.get("role") == "system" and str(msg.get("content", "")).startswith("Data curentă este"))
+    ]
+    history.append({"role": "system", "content": _now_context_ro()})
 
     _append_message(history, "user", user_message)
 
@@ -276,7 +355,7 @@ def process_chat(user_id: str, user_message: str) -> str:
 
         # Handle tool calls and continue the loop.
         for tool_call in assistant_message.get("tool_calls", []):
-            tool_result = _dispatch_tool_call(tool_call, user_id)
+            tool_result = _dispatch_tool_call(tool_call, phone)
             history.append(
                 {
                     "role": "tool",
@@ -300,8 +379,20 @@ def chat(request: ChatRequest) -> Dict[str, str]:
     Chat endpoint that processes user messages with Azure OpenAI + tools.
     """
 
+    # region debug log H3
+    _debug_log(
+        "H3",
+        "agent.py:chat",
+        "chat_request_received",
+        {
+            "phone_kind": _phone_kind(request.phone),
+            "phone_len": len(request.phone),
+            "message_len": len(request.message),
+        },
+    )
+    # endregion
     try:
-        reply = process_chat(request.user_id, request.message)
+        reply = process_chat(request.phone, request.message)
         return {"reply": reply}
     except ToolExecutionError as exc:
         logger.exception("Tool execution failed")

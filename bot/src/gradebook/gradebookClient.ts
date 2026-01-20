@@ -30,7 +30,11 @@ export async function getStudentByPhone(
   phoneNumber: string,
   apiKey: string
 ): Promise<GradebookStudentLookup | null> {
-  const url = new URL("https://gradebook-api.baghici.works/students/by-phone");
+  const baseUrl =
+    process.env.GRADEBOOK_API_URL?.trim() ?? "https://gradebook-api.baghici.works";
+  const url = baseUrl.endsWith("/students/by-phone")
+    ? new URL(baseUrl)
+    : new URL("/students/by-phone", baseUrl);
   url.searchParams.set("phone", phoneNumber);
 
   const res = await fetch(url, {

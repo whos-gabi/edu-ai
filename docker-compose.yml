@@ -1,0 +1,44 @@
+services:
+  api:
+    build: ./api/gradebook-api
+    restart: always
+    env_file:
+      - ./api/gradebook-api/.env
+    environment:
+      - PORT=8020
+    networks:
+      - app-network
+    ports:
+      - "8020:8020"
+
+  orchestrator:
+    build: ./orchestrator
+    restart: always
+    env_file:
+      - ./orchestrator/.env
+    networks:
+      - app-network
+    ports:
+      - "8080:8080"
+    depends_on:
+      - api
+    volumes:
+      - /Users/cryptobroski/git/edu-ai/.cursor:/Users/cryptobroski/git/edu-ai/.cursor
+
+  bot:
+    build: ./bot
+    restart: always
+    env_file:
+      - ./bot/.env
+    environment:
+      - USERS_FILE=/app/data/users.json
+    networks:
+      - app-network
+    depends_on:
+      - orchestrator
+    volumes:
+      - ./bot/data:/app/data
+
+networks:
+  app-network:
+    driver: bridge
