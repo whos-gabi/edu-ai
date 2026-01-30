@@ -1,4 +1,5 @@
 # EduAi — Asistent școlar inteligent
+### [Prezentare](https://docs.google.com/presentation/d/1V3IhkHU2lp7AgPT_EDxSBjJFow5u5nShPRbhc4nO1dM/edit?usp=sharing)
 
 EduAi este un asistent inteligent autonom pentru monitorizarea situației școlare, ce combina date structurate (note/absențe) cu date nestructurate (regulamente). Inspirat din MCP și RAG, folosește Azure OpenAI (GPT-4o) și Azure AI Search pentru un flux complet de raționament + tool calling.
 
